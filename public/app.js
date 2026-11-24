@@ -66,6 +66,10 @@ function prep(s) {
     t.dir = t.hi >= 0 && t.hi < t.t.length - 1 ? (s.stations[t.t[t.hi + 1][0]].lat > hlat ? 'N' : 'S') : null;
     t.pos = {}; t.t.forEach((x, i) => { if (!(x[0] in t.pos)) t.pos[x[0]] = i; });
   }
+  // Renfe repite trenes (p. ej. 13001 y 35001 son el mismo Regional): se agrupan
+  const groups = {};
+  for (const t of s.trips) { t.key = `${t.f}|${t.hi >= 0 ? t.t[t.hi][2] : t.t[0][2]}|${t.t[t.t.length - 1][0]}`; (groups[t.key] ||= []).push(t); }
+  for (const t of s.trips) t.alts = groups[t.key].filter(o => o !== t);
   s.homeName = s.stations[H].n;
   return s;
 }
@@ -78,7 +82,13 @@ function instances() {
   const list = [];
   for (let d = today - 1; d <= today + 1; d++) {
     const di = d - S.sched.baseN;
-    for (const t of S.sched.trips) if (S.sched.svc[t.s]?.has(di)) list.push({ t, dayN: d, off: d * 1440 });
+    const seen = new Set(); // Renfe repite algunos trenes con calendarios solapados
+    for (const t of S.sched.trips) {
+      if (!S.sched.svc[t.s]?.has(di)) continue;
+      const k = t.key;
+      if (seen.has(k)) continue; seen.add(k);
+      list.push({ t, dayN: d, off: d * 1440 });
+    }
   }
   S.inst = { key: today, sched: S.sched, list };
   return list;
@@ -148,7 +158,8 @@ async function fetchLive() {
   }
   S.liveMode = 'none'; return false;
 }
-const liveRec = t => S.live.byId[t.id] || (t.n ? S.live.byNum[t.n] : null) || null;
+const rec1 = t => S.live.byId[t.id] || (t.n ? S.live.byNum[t.n] : null) || null;
+const liveRec = t => { let r = rec1(t); if (r) return r; for (const a of t.alts || []) { r = rec1(a); if (r) return r; } return null; };
 function delayAt(t, i) {
   const r = liveRec(t); if (!r) return null;
   if (r.u) {
@@ -207,7 +218,9 @@ function textColor(hex) {
   const n = parseInt(hex || '777777', 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255;
   return (r * 299 + g * 587 + b * 114) / 1000 > 150 ? '#14110d' : '#fff';
 }
-const badge = t => `<span class="line" style="background:#${esc(t.c)};color:${textColor(t.c)}">${esc(t.l === 'Regional' ? 'Regional' : t.l)}</span>`;
+const DEFC = { C1: '78B4E1', Regional: '7A2A8F' };
+const lineColor = t => { const n = parseInt(t.c || '0', 16), lum = ((n >> 16) * 299 + ((n >> 8) & 255) * 587 + (n & 255) * 114) / 1000; return !t.c || lum > 215 ? (DEFC[t.l] || '7A2A8F') : t.c; };
+const badge = t => `<span class="line" style="background:#${esc(lineColor(t))};color:${textColor(lineColor(t))}">${esc(t.l === 'Regional' ? 'Regional' : t.l)}</span>`;
 const stTag = st => `<span class="st ${st.k}">${esc(st.txt)}</span>`;
 function dayTag(abs) {
   const today = Math.floor(nowAbs() / 1440), d = Math.floor(abs / 1440);
@@ -343,7 +356,7 @@ function renderMap() {
   const html = marks.map(mk => {
     shift = mk.y - prev < 0.55 ? shift + 1 : 0; prev = mk.y;
     const top = TOP + mk.y * ROW + ROW / 2 + shift * 22;
-    const bg = `#${mk.t.c}`, fg = textColor(mk.t.c);
+    const bg = `#${lineColor(mk.t)}`, fg = textColor(lineColor(mk.t));
     const lbl = `${mk.t.l === 'Regional' ? 'R' : mk.t.l} → ${mk.t.h}${mk.when ? ` · ${mk.when}` : ''}${mk.m > 1 ? ` · +${mk.m}` : ''}`;
     return `<div class="trn ${mk.real ? '' : 'est'}" style="top:${top}px"><i style="background:${bg};color:${fg}">${mk.up ? '↑' : '↓'}</i><span class="p ${mk.real ? '' : 'est'}" style="background:${bg};color:${fg}">${esc(lbl)}</span></div>`;
   }).join('');
@@ -364,7 +377,7 @@ function durations() {
     for (let i = 0; i < t.hi; i++) (acc[t.t[i][0]] ||= []).push(t.t[t.hi][1] - t.t[i][2]);
   }
   return Object.entries(acc).map(([s, v]) => { v.sort((a, b) => a - b); return { s: +s, m: Math.round(v[Math.floor(v.length / 2)]) }; })
-    .filter(x => x.s !== H).sort((a, b) => S.sched.stations[b.s].lat - S.sched.stations[a.s].lat);
+    .filter(x => x.s !== H && x.m <= 120).sort((a, b) => S.sched.stations[b.s].lat - S.sched.stations[a.s].lat);
 }
 function renderVuelta() {
   const oi = originIdx();
@@ -379,7 +392,7 @@ function renderVuelta() {
       <button class="share" type="button" data-share="${esc(`Vuelvo a ${S.sched.homeName} en el ${t.l} de las ${hm(x.dep)} desde ${sn(oi)}; llego a las ${hm(x.arr)}.`)}">Avisa a quien te espera</button>
     </article>`;
   }).join('') : `<p class="empty">No hay trenes de ${esc(sn(oi))} a ${esc(S.sched.homeName)} en las próximas horas.</p>`;
-  $('#backLater').innerHTML = list.slice(2, 12).map(x => `<li><span class="t num">${hm(x.est)}</span>${badge(x.t)}<span class="d">llega ${hm(x.arr)}${dayTag(x.dep) ? ` · ${dayTag(x.dep)}` : ''}</span>${stTag(x.st)}</li>`).join('');
+  $('#backLater').innerHTML = list.slice(2, 12).map(x => `<li><span class="t num">${hm(x.est)}</span>${badge(x.t)}<span class="d">llega ${hm(x.arr)}${dayTag(x.dep) ? ` · ${dayTag(x.dep)}` : ''}</span>${stTag(x.st.k === 'nd' ? { ...x.st, txt: 'Sin dato' } : x.st)}</li>`).join('');
   const d = durations();
   const item = x => `<li><button type="button" data-origin="${esc(sn(x.s))}" class="${x.s === oi ? 'on' : ''}"><span>${esc(sn(x.s))}</span><b>${x.m} min</b></button></li>`;
   $('#durations').innerHTML = d.map(item).join('');

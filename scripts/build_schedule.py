@@ -17,7 +17,7 @@ from common import (CERCANIAS_GTFS, DATA_DIR, HOME, LDMD_GTFS, display_name, fet
 
 RAIL_TYPES = {"2"} | {str(x) for x in range(100, 118)}
 REGIONAL_NAMES = {"md", "regional", "reg exp", "regional expres", "r expres", "media distancia", "rexp", "reg"}
-DEFAULT_COLORS = {"C1": "E2001A", "Regional": "7A2A8F"}
+DEFAULT_COLORS = {"C1": "78B4E1", "Regional": "7A2A8F"}
 
 
 def open_zip(src):
@@ -148,7 +148,14 @@ def process(zf, feed, base, ndays, stations, st_index, stop_map, services_out, t
         if len(seq) < 2:
             continue
         label = line_label(feed, route)
-        color = (route.get("route_color") or DEFAULT_COLORS.get(label, "7A2A8F")).upper()
+        color = (route.get("route_color") or "").upper()
+        try:
+            n = int(color, 16)
+            light = ((n >> 16) * 299 + ((n >> 8) & 255) * 587 + (n & 255) * 114) / 1000 > 215
+        except ValueError:
+            light = True
+        if light:
+            color = DEFAULT_COLORS.get(label, "7A2A8F")
         svc = f"{feed}:{t['service_id']}"
         services_out[svc] = svc_days[t["service_id"]]
         trips_out.append({

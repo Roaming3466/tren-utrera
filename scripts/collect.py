@@ -99,8 +99,21 @@ def rt_index(tu_entities, veh_entities):
     return by_id, by_num
 
 
-def find_rt(trip, by_id, by_num):
-    return by_id.get(trip["id"]) or (by_num.get(trip["n"]) if trip.get("n") else None)
+def trip_key(t, home=None):
+    """Mismo tren físico: misma hora en Utrera y mismo destino (Renfe lo repite con varios números)."""
+    if home is not None:
+        hi = next((x[2] for x in t["t"] if x[0] == home), None)
+        if hi is not None:
+            return (t["f"], hi, t["t"][-1][0])
+    return (t["f"], t["t"][0][0], t["t"][0][2], t["t"][-1][0])
+
+
+def find_rt(trip, by_id, by_num, groups=None, home=None):
+    for t in [trip] + [o for o in (groups or {}).get(trip_key(trip, home), []) if o is not trip]:
+        r = by_id.get(t["id"]) or (by_num.get(t["n"]) if t.get("n") else None)
+        if r:
+            return r
+    return None
 
 
 def home_delay(trip, rec, sched, home):
@@ -121,21 +134,30 @@ def collect_once(sched, hist, alerts_state):
     home = sched["home"]
     base = parse_day(sched["base"])
     live = {}
+    groups = {}
+    for t in sched["trips"]:
+        groups.setdefault(trip_key(t, sched["home"]), []).append(t)
+    sample = list(by_id.keys())[:8]
     today = now.replace(hour=0, minute=0, second=0, microsecond=0)
     nowm = day_minutes(now)
     for back in (0, 1):  # servicios de hoy y de ayer (pasada la medianoche)
         day = today - timedelta(days=back)
         di = (day - base).days
         dstr = iso_day(day)
+        seen = set()  # Renfe repite algunos trenes con calendarios solapados
         for t in sched["trips"]:
             if di not in sched["services"].get(t["s"], []):
                 continue
+            dk = trip_key(t, home)
+            if dk in seen:
+                continue
+            seen.add(dk)
             seq = t["t"]
             first, last = seq[0][2], seq[-1][1]
             rel_now = nowm + back * 1440
             if not (first - 45 <= rel_now <= last + 90):
                 continue
-            rec = find_rt(t, by_id, by_num)
+            rec = find_rt(t, by_id, by_num, groups, home)
             if rec:
                 live[t["id"]] = {k: rec[k] for k in ("d", "x", "v", "u") if k in rec}
             hi = next((i for i, x in enumerate(seq) if x[0] == home), None)
@@ -198,7 +220,7 @@ def collect_once(sched, hist, alerts_state):
             st["on"] = 0
     for aid in [k for k, v in alerts_state.items() if not v["on"] and v["last"] < ts() - KEEP_DAYS * 86400]:
         del alerts_state[aid]
-    return {"ts": ts(), "n_rt": len(tu), "trips": live}
+    return {"ts": ts(), "n_rt": len(tu), "trips": live, "sample": sample}
 
 
 def git(*args):
