@@ -61,6 +61,9 @@ def train_number(*vals):
         if not v:
             continue
         v = str(v).strip()
+        m = re.fullmatch(r"(\d{5})\d(\d{4}-\d{2}-\d{2})", v)  # Media Distancia: 13001 + variante + fecha
+        if m:
+            return m.group(1).lstrip("0")
         if re.fullmatch(r"\d{3,6}", v):
             return v.lstrip("0") or v
         m = re.findall(r"(?<!\d)(\d{5})(?!\d)", v)

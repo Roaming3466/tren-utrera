@@ -99,6 +99,7 @@ const gk = (o, k) => o == null ? undefined : (o[k] ?? o[k.replace(/[A-Z]/g, c =>
 function trainNum(...vals) {
   for (const v of vals) {
     if (!v) continue; const s = String(v).trim();
+    const md = s.match(/^(\d{5})\d\d{4}-\d{2}-\d{2}$/); if (md) return md[1].replace(/^0+/, '');
     if (/^\d{3,6}$/.test(s)) return s.replace(/^0+/, '') || s;
     const m = [...s.matchAll(/(?:^|\D)(\d{5})(?=\D|$)/g)];
     if (m.length) return m[m.length - 1][1].replace(/^0+/, '');
