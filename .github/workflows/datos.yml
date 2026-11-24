@@ -1,0 +1,72 @@
+name: Datos Renfe (horario + directo)
+
+# Cada hora, en horario de servicio, arranca un recolector que dura ~58 min.
+# Consulta Renfe cada 30 s y publica live.json / history.json / alerts.json
+# en la rama "data" (un único commit que se reescribe, para no engordar el repo).
+# Si el horario tiene más de 20 h, antes lo regenera desde los GTFS de Renfe.
+on:
+  schedule:
+    - cron: "2 4-23 * * *"   # UTC → 05:02–00:02 en invierno (Madrid)
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: "Segundos de recolección"
+        default: "3480"
+      rebuild:
+        description: "Forzar regenerar horario (1/0)"
+        default: "0"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: datos
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      DATA_DIR: _data
+      TZ: Europe/Madrid
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Preparar rama de datos
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          URL="https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+          if git clone --depth 1 --branch data "$URL" _data; then
+            echo "Rama data encontrada"
+          else
+            mkdir -p _data && cd _data && git init -b data && git remote add origin "$URL"
+          fi
+          cd "$GITHUB_WORKSPACE/_data"
+          git config user.name "tren-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Regenerar horario si hace falta
+        run: |
+          AGE=999999
+          if [ -f _data/schedule.json ]; then
+            AGE=$(( $(date +%s) - $(python -c "import json;print(json.load(open('_data/schedule.json'))['generated'])") ))
+          fi
+          echo "Antigüedad del horario: ${AGE}s"
+          if [ "$AGE" -gt 72000 ] || [ "${{ github.event.inputs.rebuild }}" = "1" ]; then
+            python scripts/build_schedule.py || echo "::warning::No se pudo regenerar el horario"
+          fi
+          test -f _data/schedule.json
+
+      - name: Recolectar en directo
+        env:
+          INTERVAL: "30"
+          PUSH: "1"
+          PUSH_EVERY: "60"
+          DURATION: ${{ github.event.inputs.duration || '3480' }}
+        run: python scripts/collect.py

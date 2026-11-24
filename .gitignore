@@ -1,0 +1,6 @@
+public/data/
+tests/fake/
+tests/out/
+_data/
+__pycache__/
+*.pyc
