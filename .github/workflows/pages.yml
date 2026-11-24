@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths: ["public/**", ".github/workflows/pages.yml"]
   workflow_dispatch:
+  schedule:
+    - cron: "17 */2 * * *"   # por si Pages se activa más tarde o algo falla
 
 permissions:
   contents: read
